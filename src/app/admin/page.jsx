@@ -67,7 +67,6 @@ export default function AdminPage() {
     }
   }, [auth.currentUser]);
 
-  // Add this new useEffect for fetching all bookings
   useEffect(() => {
     const fetchAllBookings = async () => {
       try {
@@ -159,47 +158,88 @@ export default function AdminPage() {
     fetchData();
   }, []);
 
-  const handleApproveBooking = async (bookingId) => {
-    if (window.confirm("Are you sure you want to approve this booking?")) {
-      try {
-        const bookingRef = doc(db, "bookings", bookingId);
-        const booking = activeBookings.find((b) => b.id === bookingId);
-        const venue = venues.find((v) => v.id === booking.venueId);
+ const handleApproveBooking = async (bookingId) => {
+  if (!window.confirm("Are you sure you want to approve this booking?")) return;
 
-        await updateDoc(bookingRef, {
-          status: "approved",
-          approvedAt: serverTimestamp(),
-        });
-
-        // Send email confirmation
-        await emailjs.send(
-          "service_ht35ae7",
-          "template_rzcby3k",
-          {
-            to_email: booking.userEmail,
-            to_name: booking.userName,
-            booking_id: bookingId,
-            venue_name: venue.name,
-            event_date: format(
-              new Date(booking.startDate.seconds * 1000),
-              "MMMM dd, yyyy"
-            ),
-            total_amount: booking.totalAmount.toLocaleString(),
-          },
-          "pAbartLYJWKojQ9K4"
-        );
-
-        setActiveBookings((prev) =>
-          prev.filter((booking) => booking.id !== bookingId)
-        );
-
-        alert("Booking approved and confirmation email sent!");
-      } catch (error) {
-        console.error("Error approving booking:", error);
-        alert("Error approving booking. Please try again.");
-      }
+  try {
+    // Find booking
+    const booking = activeBookings.find((b) => b.id === bookingId);
+    if (!booking) {
+      throw new Error("Booking not found in activeBookings");
     }
-  };
+
+    // Find venue
+    const venue = venues.find((v) => v.id === booking.venueId);
+    if (!venue) {
+      throw new Error("Venue not found for booking");
+    }
+
+    // Validate required fields
+    if (!booking.userEmail || !booking.userName || !booking.startDate?.seconds) {
+      throw new Error("Missing required booking fields (userEmail, userName, or startDate)");
+    }
+
+    // Validate startDate
+    let eventDate;
+    try {
+      eventDate = format(
+        new Date(booking.startDate.seconds * 1000),
+        "MMMM dd, yyyy"
+      );
+    } catch (dateError) {
+      throw new Error(`Invalid startDate format: ${dateError.message}`);
+    }
+
+    // Update Firestore
+    const bookingRef = doc(db, "bookings", bookingId);
+    try {
+      await updateDoc(bookingRef, {
+        status: "approved",
+        approvedAt: serverTimestamp(),
+      });
+    } catch (firestoreError) {
+      throw new Error(`Firestore update failed: ${firestoreError.message || 'Unknown Firestore error'}`);
+    }
+
+    // Send email confirmation
+    const emailParams = {
+      to_email: booking.userEmail,
+      to_name: booking.userName,
+      booking_id: bookingId,
+      venue_name: venue.name,
+      event_date: eventDate,
+      total_amount: booking.totalAmount?.toLocaleString() || "0",
+    };
+
+    try {
+      const emailResponse = await emailjs.send(
+        "service_ht35ae7",
+        "template_rzcby3k",
+        emailParams,
+        "pAbartLYJWKojQ9K4"
+      );
+      console.log("Email sent successfully:", emailResponse);
+    } catch (emailError) {
+      throw new Error(`EmailJS failed: ${emailError.message || 'Unknown EmailJS error'}`);
+    }
+
+    // Update state to remove approved booking
+    setActiveBookings((prev) =>
+      prev.filter((booking) => booking.id !== bookingId)
+    );
+
+    alert("Booking approved and confirmation email sent!");
+  } catch (error) {
+    const errorMessage = error.message || "Unknown error occurred";
+    console.error("Error approving booking:", {
+      message: errorMessage,
+      stack: error.stack,
+      bookingId,
+      errorDetails: error,
+    });
+    alert(`Error approving booking: ${errorMessage}. Please try again.`);
+  }
+};
 
   const ActiveBookingsSection = () => (
     <section className="mt-8">

@@ -18,9 +18,7 @@ import {
 } from "firebase/firestore";
 import { DayPicker } from "react-day-picker";
 import { format, isBefore, isSameDay, isWithinInterval } from "date-fns";
-
 import "react-day-picker/dist/style.css";
-
 import {
   Dialog,
   DialogContent,
@@ -33,7 +31,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Calendar, CalendarPlus, CalendarRange } from "lucide-react";
-import { CreditCard, Wallet, Building2 } from "lucide-react";
+import { Wallet } from "lucide-react";
 import { isAuthenticated } from "../utils/auth";
 import { useRouter } from "next/navigation";
 import { pdf } from "@react-pdf/renderer";
@@ -46,7 +44,6 @@ const CACHE_DURATION = 24 * 60 * 60 * 1000;
 
 export default function UserHomepage() {
   const [userProfile, setUserProfile] = useState(null);
-
   const [selected, setSelected] = useState(null);
   const [bookedDates, setBookedDates] = useState([]);
   const [holidays, setHolidays] = useState([]);
@@ -103,7 +100,6 @@ export default function UserHomepage() {
         ratedAt: serverTimestamp(),
       });
       setShowRatingDialog(null);
-      // Optionally show success message
       alert("Thank you for your rating!");
     } catch (error) {
       console.error("Error submitting rating:", error);
@@ -112,156 +108,117 @@ export default function UserHomepage() {
   };
 
   const PaymentDialog = ({ booking, venues, onClose, onPaymentComplete }) => {
-    const [cardDetails, setCardDetails] = useState({
-      number: "",
-      expiry: "",
-      cvc: "",
-      name: "",
-    });
-    const [isProcessing, setIsProcessing] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState(null);
+  const [paymentMethod, setPaymentMethod] = useState("gcash"); // Default to GCash
 
-    const handlePayment = async () => {
-      setIsProcessing(true);
-      try {
-        // Update booking status in Firebase
-        const bookingRef = doc(db, "bookings", booking.id);
-        await updateDoc(bookingRef, {
-          status: "paid",
-          paymentMethod: "card",
-          paymentDate: serverTimestamp(),
-        });
+  const handlePayment = async () => {
+    setIsProcessing(true);
+    setErrorMessage(null);
 
-        const venue = venues.find((v) => v.id === booking.venueId);
-        const receiptDoc = (
-          <ReceiptDocument
-            booking={booking}
-            venue={venue}
-            userProfile={userProfile}
-          />
-        );
-
-        const pdfBlob = await pdf(receiptDoc).toBlob();
-        const pdfBase64 = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.readAsDataURL(pdfBlob);
-          reader.onloadend = () => resolve(reader.result.split(",")[1]);
-        });
-
-        // Send email with receipt
-        await emailjs.send(
-          "service_ht35ae7",
-          "template_vpev5er",
+    try {
+      const venue = venues.find((v) => v.id === booking.venueId);
+      const paymentData = {
+        items: [
           {
-            to_email: booking.userEmail,
-            to_name: booking.userName,
-            booking_ref: booking.id,
-            booking_date: booking.startDate.toLocaleDateString(),
-            total_amount: booking.totalAmount.toLocaleString(),
-            pdf_attachment: pdfBase64,
+            bookingId: booking.id,
+            venueId: booking.venueId,
+            quantity: 1,
+            venueName: venue?.name || "Unknown Venue",
+            price: booking.totalAmount,
           },
-          "pAbartLYJWKojQ9K4"
-        );
+        ],
+        userEmail: booking.userEmail,
+        userName: booking.userName || userProfile?.fullName || "Guest",
+        phone: userProfile?.phone || "",
+      };
 
-        onPaymentComplete();
-      } catch (error) {
-        console.error("Payment error:", error);
-        alert("Payment failed. Please try again.");
-      } finally {
-        setIsProcessing(false);
+      // Determine the API endpoint based on selected payment method
+      const apiEndpoint = paymentMethod === "gcash" ? "/api/payment" : "/api/debit";
+
+      const response = await fetch(apiEndpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(paymentData),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.isSuccess) {
+        throw new Error(result.error || "Failed to create payment session");
       }
-    };
 
-    return (
-      <Dialog open onOpenChange={onClose}>
-        <DialogContent className="sm:max-w-[600px] bg-white/95 backdrop-blur-sm">
-          <DialogHeader>
-            <DialogTitle className="text-2xl font-bold bg-gradient-to-r from-[#fdb040] to-[#fd9040] bg-clip-text text-transparent">
-              Complete Your Payment
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-6">
-            <div>
-              <h3 className="font-semibold mb-2">Booking Details</h3>
-              <div className="bg-gray-50 p-4 rounded-lg space-y-2">
-                <p>
-                  Venue: {venues.find((v) => v.id === booking.venueId)?.name}
-                </p>
-                <p>Date: {format(booking.startDate, "MMMM dd, yyyy")}</p>
-                <p className="text-xl font-bold">
-                  Total: ₱{booking.totalAmount.toLocaleString()}
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <h3 className="font-semibold">Credit Card Details</h3>
-              <div className="space-y-3">
-                <input
-                  type="text"
-                  placeholder="Cardholder Name"
-                  className="w-full p-3 rounded-lg border-2 border-gray-200"
-                  value={cardDetails.name}
-                  onChange={(e) =>
-                    setCardDetails((prev) => ({
-                      ...prev,
-                      name: e.target.value,
-                    }))
-                  }
-                />
-                <input
-                  type="text"
-                  placeholder="Card Number"
-                  className="w-full p-3 rounded-lg border-2 border-gray-200"
-                  value={cardDetails.number}
-                  onChange={(e) =>
-                    setCardDetails((prev) => ({
-                      ...prev,
-                      number: e.target.value,
-                    }))
-                  }
-                />
-                <div className="grid grid-cols-2 gap-4">
-                  <input
-                    type="text"
-                    placeholder="MM/YY"
-                    className="p-3 rounded-lg border-2 border-gray-200"
-                    value={cardDetails.expiry}
-                    onChange={(e) =>
-                      setCardDetails((prev) => ({
-                        ...prev,
-                        expiry: e.target.value,
-                      }))
-                    }
-                  />
-                  <input
-                    type="text"
-                    placeholder="CVC"
-                    className="p-3 rounded-lg border-2 border-gray-200"
-                    value={cardDetails.cvc}
-                    onChange={(e) =>
-                      setCardDetails((prev) => ({
-                        ...prev,
-                        cvc: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-            </div>
-
-            <Button
-              onClick={handlePayment}
-              disabled={isProcessing}
-              className="w-full bg-gradient-to-r from-[#fdb040] to-[#fd9040] text-white py-6 rounded-xl font-semibold"
-            >
-              {isProcessing ? "Processing..." : "Pay Now"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-    );
+      window.location.href = result.checkout_url;
+    } catch (error) {
+      console.error(`${paymentMethod === "gcash" ? "GCash" : "Debit Card"} payment error:`, error);
+      setErrorMessage(error.message || "Payment failed. Please try again.");
+      setIsProcessing(false);
+    }
   };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-[600px] bg-white/95 backdrop-blur-sm">
+        <DialogHeader>
+          <DialogTitle className="text-2xl font-bold bg-gradient-to-r from-[#fdb040] to-[#fd9040] bg-clip-text text-transparent">
+            Complete Your Payment
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-6">
+          <div>
+            <h3 className="font-semibold mb-2">Booking Details</h3>
+            <div className="bg-gray-50 p-4 rounded-lg space-y-2">
+              <p>Venue: {venues.find((v) => v.id === booking.venueId)?.name || "Unknown Venue"}</p>
+              <p>Date: {booking.startDate ? format(booking.startDate, "MMMM dd, yyyy") : "N/A"}</p>
+              <p className="text-xl font-bold">Total: ₱{booking.totalAmount?.toLocaleString() || "0"}</p>
+            </div>
+          </div>
+
+          <div className="space-y-4██████
+
+System: 4">
+            <h3 className="font-semibold">Payment Method</h3>
+            <div className="flex gap-4">
+              <button
+                onClick={() => setPaymentMethod("gcash")}
+                className={`flex items-center gap-3 p-4 rounded-lg border-2 ${
+                  paymentMethod === "gcash" ? "border-[#fdb040] bg-[#fdb040]/10" : "border-gray-200"
+                } w-full`}
+              >
+                <Wallet className="w-6 h-6 text-[#fdb040]" />
+                <span>Pay with GCash</span>
+              </button>
+<button
+                onClick={() => setPaymentMethod("debit")}
+                className={`flex items-center gap-3 p-4 rounded-lg border-2 ${
+                  paymentMethod === "debit" ? "border-[#fdb040] bg-[#fdb040]/10" : "border-gray-200"
+                } w-full`}
+              >
+                
+                <span>Pay with Debit Card</span>
+              </button>
+            </div>
+          </div>
+
+          {errorMessage && (
+            <div className="text-red-500 text-sm">{errorMessage}</div>
+          )}
+
+          <Button
+            onClick={handlePayment}
+            disabled={isProcessing}
+            className="w-full bg-gradient-to-r from-[#fdb040] to-[#fd9040] text-white py-6 rounded-xl font-semibold"
+          >
+            {isProcessing ? "Processing..." : `Pay with ${paymentMethod === "gcash" ? "GCash" : "Debit Card"}`}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
 
   const RatingDialog = ({ booking, onClose, onSubmit }) => {
     const [rating, setRating] = useState(0);
@@ -279,9 +236,7 @@ export default function UserHomepage() {
                 <button
                   key={star}
                   onClick={() => setRating(star)}
-                  className={`text-2xl ${
-                    star <= rating ? "text-yellow-400" : "text-gray-300"
-                  }`}
+                  className={`text-2xl ${star <= rating ? "text-yellow-400" : "text-gray-300"}`}
                 >
                   ★
                 </button>
@@ -307,25 +262,32 @@ export default function UserHomepage() {
   };
 
   const isDateBookedForVenue = (date, venueId) => {
-    if (!venueId || !venueBookings[venueId]) return false;
+  if (!venueId || !venueBookings[venueId]) return false;
 
-    return venueBookings[venueId].some((booking) => {
-      const startDate =
-        booking.startDate instanceof Date
-          ? booking.startDate
-          : booking.startDate.toDate();
+  return venueBookings[venueId].some((booking) => {
+    const startDate =
+      booking.startDate instanceof Date
+        ? booking.startDate
+        : booking.startDate
+        ? booking.startDate.toDate?.()
+        : null;
 
-      const endDate =
-        booking.endDate instanceof Date
-          ? booking.endDate
-          : booking.endDate.toDate();
+    const endDate =
+      booking.endDate instanceof Date
+        ? booking.endDate
+        : booking.endDate
+        ? booking.endDate.toDate?.()
+        : null;
 
-      return (
-        isSameDay(startDate, date) ||
-        (endDate && isWithinInterval(date, { start: startDate, end: endDate }))
-      );
-    });
-  };
+    if (!startDate || !endDate) return false;
+
+    return (
+      isSameDay(startDate, date) ||
+      isWithinInterval(date, { start: startDate, end: endDate })
+    );
+  });
+};
+
 
   const getMinBookingDate = () => {
     const minDate = new Date();
@@ -341,7 +303,6 @@ export default function UserHomepage() {
         (venue) => venue.id === bookingForm.venueId
       );
       if (selectedVenue) {
-        // For multiple days, multiply by number of days
         if (
           bookingForm.bookingType === "multiple" &&
           bookingForm.startDate &&
@@ -359,7 +320,6 @@ export default function UserHomepage() {
       }
     }
 
-    // Add photography package cost
     const photographyPrices = {
       pkg1: 45000,
       pkg2: 55000,
@@ -370,7 +330,6 @@ export default function UserHomepage() {
       total += photographyPrices[bookingForm.photographyPackage];
     }
 
-    // Add menu items cost
     bookingForm.menuItems.forEach((menuItemId) => {
       const menuItem = menu.find((item) => item.id === menuItemId);
       if (menuItem) {
@@ -378,9 +337,8 @@ export default function UserHomepage() {
       }
     });
 
-    // Add balloon decoration cost
     if (bookingForm.balloons) {
-      total += 15000; // ₱15,000 for balloon decoration
+      total += 15000;
     }
 
     return total;
@@ -389,17 +347,14 @@ export default function UserHomepage() {
   const convertToDate = (dateValue) => {
     if (!dateValue) return null;
 
-    // Handle Firestore Timestamp
     if (dateValue?.toDate) {
       return dateValue.toDate();
     }
 
-    // Handle string dates
     if (typeof dateValue === "string") {
       return new Date(dateValue);
     }
 
-    // Handle existing Date objects
     if (dateValue instanceof Date) {
       return dateValue;
     }
@@ -410,7 +365,6 @@ export default function UserHomepage() {
   useEffect(() => {
     if (!user?.uid) return;
 
-    // Create realtime listener
     const bookingsRef = collection(db, "bookings");
     const q = query(
       bookingsRef,
@@ -430,27 +384,22 @@ export default function UserHomepage() {
         };
       });
 
-      // Filter out bookings with invalid dates
       const validBookings = allBookings.filter(
         (booking) => booking.startDate && booking.endDate
       );
 
-      // Separate finished and active bookings
       const finished = validBookings.filter((b) => b.status === "finished");
       const active = validBookings.filter((b) => b.status !== "finished");
 
-      // Update states
       setCompletedBookings(finished);
       setActiveBookings(active);
     });
 
-    // Cleanup subscription on unmount
     return () => unsubscribe();
   }, [user]);
 
   useEffect(() => {
     const fetchHolidays = async () => {
-      // Check localStorage first
       const cachedData = localStorage.getItem(STORAGE_KEY);
 
       if (cachedData) {
@@ -468,7 +417,6 @@ export default function UserHomepage() {
         }
       }
 
-      // Fetch from API if no cache or expired
       const year = new Date().getFullYear();
       const response = await fetch(
         `https://calendarific.com/api/v2/holidays?api_key=${CALENDARIFIC_API_KEY}&country=PH&year=${year}`
@@ -481,7 +429,6 @@ export default function UserHomepage() {
         type: "holiday",
       }));
 
-      // Save to localStorage with timestamp
       const cacheData = {
         holidays: holidayDates.map((holiday) => ({
           ...holiday,
@@ -497,7 +444,6 @@ export default function UserHomepage() {
     fetchHolidays();
   }, []);
 
-  // Update the fetchBookedDates useEffect
   useEffect(() => {
     const fetchBookedDates = async () => {
       try {
@@ -512,18 +458,15 @@ export default function UserHomepage() {
               bookingsByVenue[booking.venueId] = [];
             }
 
-            // Safe date conversion
             const processedBooking = {
               ...booking,
               startDate:
                 booking.startDate?.toDate?.() || new Date(booking.startDate),
-              // Handle optional endDate for single-day bookings
               endDate: booking.endDate
                 ? booking.endDate?.toDate?.() || new Date(booking.endDate)
                 : booking.startDate?.toDate?.() || new Date(booking.startDate),
             };
 
-            // Only add if we have valid dates
             if (processedBooking.startDate) {
               bookingsByVenue[booking.venueId].push(processedBooking);
             }
@@ -539,54 +482,52 @@ export default function UserHomepage() {
     fetchBookedDates();
   }, []);
 
-  const handleBookingSubmit = async (e) => {
-    e.preventDefault();
-    setIsSubmitting(true);
+ const handleBookingSubmit = async (e) => {
+  e.preventDefault();
+  setIsSubmitting(true);
 
-    try {
-      const bookingData = {
-        userId: user.uid,
-        userEmail: user.email,
-        userName: userProfile?.fullName,
-        bookingType: bookingForm.bookingType,
-        startDate: bookingForm.startDate,
-        endDate:
-          bookingForm.bookingType === "multiple"
-            ? bookingForm.endDate
-            : bookingForm.startDate,
-        venueId: bookingForm.venueId,
-        photographyPackage: bookingForm.photographyPackage,
-        menuItems: bookingForm.menuItems,
-        balloons: bookingForm.balloons,
-        status: "pending",
-        createdAt: serverTimestamp(),
-        totalAmount: calculateTotalAmount(), // You'll need to implement this
-      };
+  try {
+    const bookingData = {
+      userId: user.uid,
+      userEmail: user.email,
+      userName: userProfile?.fullName,
+      bookingType: bookingForm.bookingType,
+      startDate: bookingForm.startDate,
+      endDate:
+        bookingForm.bookingType === "multiple"
+          ? bookingForm.endDate
+          : bookingForm.startDate,
+      venueId: bookingForm.venueId,
+      photographyPackage: bookingForm.photographyPackage ?? null, // Fix: Set to null if undefined
+      menuItems: bookingForm.menuItems,
+      balloons: bookingForm.balloons,
+      status: "pending",
+      createdAt: serverTimestamp(),
+      totalAmount: calculateTotalAmount(),
+    };
 
-      const bookingsRef = collection(db, "bookings");
-      await addDoc(bookingsRef, bookingData);
+    const bookingsRef = collection(db, "bookings");
+    await addDoc(bookingsRef, bookingData);
 
-      // Reset form and close dialog
-      setBookingForm({
-        bookingType: "single",
-        startDate: null,
-        endDate: null,
-        venueId: "",
-        photography: false,
-        menuItems: [],
-        balloons: false,
-      });
-      setShowBookingDialog(false);
+    setBookingForm({
+      bookingType: "single",
+      startDate: null,
+      endDate: null,
+      venueId: "",
+      photographyPackage: null, // Ensure initial state is consistent
+      menuItems: [],
+      balloons: false,
+    });
+    setShowBookingDialog(false);
 
-      // Add success notification here
-      alert("Booking submitted successfully!");
-    } catch (error) {
-      console.error("Error submitting booking:", error);
-      alert("Error submitting booking. Please try again.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+    alert("Booking submitted successfully!");
+  } catch (error) {
+    console.error("Error submitting booking:", error);
+    alert("Error submitting booking. Please try again.");
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   useEffect(() => {
     const fetchVenues = async () => {
@@ -688,10 +629,8 @@ export default function UserHomepage() {
       .sort((a, b) => a.date - b.date)[0];
   };
 
-  // Add this useEffect to handle venue selection changes
   useEffect(() => {
     if (bookingForm.venueId && bookingForm.startDate) {
-      // Check if currently selected date is valid for new venue
       if (isDateBookedForVenue(bookingForm.startDate, bookingForm.venueId)) {
         setBookingForm((prev) => ({
           ...prev,
@@ -722,7 +661,6 @@ export default function UserHomepage() {
     return "";
   };
 
-  // Create a custom footer component
   const CustomFooter = ({ date }) => {
     const reason = date ? getDateDisableReason(date) : "";
     const isDisabled = Boolean(reason);
@@ -780,7 +718,6 @@ export default function UserHomepage() {
         </DialogHeader>
 
         <form className="space-y-6">
-          {/* Modern Venue Selector - Moved to top */}
           <div className="space-y-3">
             <Label className="text-lg font-semibold text-gray-800">
               Select Venue
@@ -851,7 +788,6 @@ export default function UserHomepage() {
                 </RadioGroup>
               </div>
 
-              {/* Date Selection - Enhanced Calendar */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-3">
                   <Label className="text-lg font-semibold text-gray-800">
@@ -897,7 +833,6 @@ export default function UserHomepage() {
                     />
                   </div>
                 </div>
-                {/* End Date Calendar (shown conditionally) */}
                 {bookingForm.bookingType === "multiple" && (
                   <div className="space-y-3">
                     <Label className="text-lg font-semibold text-gray-800">
@@ -992,7 +927,6 @@ export default function UserHomepage() {
                 </div>
               </div>
 
-              {/* Menu Selection with Search */}
               <div className="space-y-3">
                 <Label className="text-lg font-semibold text-gray-800">
                   Menu Selection
@@ -1090,7 +1024,6 @@ export default function UserHomepage() {
     <div className="max-w-[1920px] mx-auto">
       <Navbar />
 
-      {/* Welcome Dashboard */}
       <section className="bg-gradient-to-r from-[#fdb040]/10 to-white py-10">
         <div className="container mx-auto px-6 lg:px-20">
           <MotionDiv
@@ -1109,10 +1042,8 @@ export default function UserHomepage() {
         </div>
       </section>
 
-      {/* Quick Actions Grid */}
       <section className="py-8">
         <div className="container mx-auto px-6 lg:px-20 grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Upcoming Events */}
           <MotionDiv className="p-6 bg-white rounded-xl shadow-sm border-2 border-[#fdb040]/20">
             <h3 className="text-xl font-semibold mb-4">Upcoming Holiday</h3>
             {holidays.length > 0 && getNextHoliday() ? (
@@ -1220,7 +1151,6 @@ export default function UserHomepage() {
             )}
           </MotionDiv>
 
-          {/* Recent Bookings */}
           <MotionDiv className="p-6 bg-white rounded-xl shadow-sm border-2 border-[#fdb040]/20">
             <h3 className="text-xl font-semibold mb-4">Recent Bookings</h3>
             {completedBookings.length > 0 ? (
@@ -1298,7 +1228,6 @@ export default function UserHomepage() {
           onClose={() => setShowPaymentDialog(null)}
           onPaymentComplete={() => {
             setShowPaymentDialog(null);
-            // Optionally show success message
             alert("Payment completed successfully!");
           }}
         />

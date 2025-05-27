@@ -32,36 +32,62 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      const userCredential = await signInWithEmailAndPassword(
-        auth,
-        email,
-        password
-      );
+      // Validate inputs
+      if (!email || !password) {
+        setError("Please enter both email and password");
+        return;
+      }
 
+      // Sign in with email and password
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+
+      // Query Firestore for user document
       const usersRef = collection(db, "users");
       const q = query(usersRef, where("uid", "==", userCredential.user.uid));
       const querySnapshot = await getDocs(q);
 
+      // Check if user document exists
+      if (querySnapshot.empty) {
+        setError("No user data found. Please contact support.");
+        return;
+      }
+
+      // Get user role from Firestore document
+      const userDoc = querySnapshot.docs[0];
+      const userRole = userDoc.data().role;
+
+      // Role-based redirection
       const roleMap = {
         user: "/user",
         owner: "/owner",
         admin: "/admin",
       };
-      for (const role of Object.keys(roleMap)) {
-        const hasRole = await isAuthenticated(role);
-        if (hasRole) {
-          router.push(roleMap[role]);
-          return;
-        }
+
+      // Redirect if role is valid
+      if (roleMap[userRole]) {
+        router.push(roleMap[userRole]);
+      } else {
+        setError("Invalid role assigned to account.");
       }
-      setError("It seems your account have a problem");
     } catch (error) {
-      setError(
-        error.code === "auth/invalid-credential"
-          ? "Invalid email or password"
-          : "An error occurred. Please try again."
-      );
-      console.error(error);
+      // Enhanced error handling
+      switch (error.code) {
+        case "auth/invalid-credential":
+          setError("Invalid email or password");
+          break;
+        case "auth/user-not-found":
+          setError("No account found with this email");
+          break;
+        case "auth/wrong-password":
+          setError("Incorrect password");
+          break;
+        case "auth/too-many-requests":
+          setError("Too many attempts. Please try again later.");
+          break;
+        default:
+          setError("An error occurred. Please try again.");
+          console.error("Authentication error:", error);
+      }
     } finally {
       setIsLoading(false);
     }
