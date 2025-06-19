@@ -158,88 +158,68 @@ export default function AdminPage() {
     fetchData();
   }, []);
 
- const handleApproveBooking = async (bookingId) => {
+const handleApproveBooking = async (bookingId) => {
   if (!window.confirm("Are you sure you want to approve this booking?")) return;
 
   try {
     // Find booking
     const booking = activeBookings.find((b) => b.id === bookingId);
-    if (!booking) {
-      throw new Error("Booking not found in activeBookings");
-    }
+    if (!booking) throw new Error("Booking not found in activeBookings");
 
     // Find venue
     const venue = venues.find((v) => v.id === booking.venueId);
-    if (!venue) {
-      throw new Error("Venue not found for booking");
-    }
+    if (!venue) throw new Error("Venue not found for booking");
 
     // Validate required fields
     if (!booking.userEmail || !booking.userName || !booking.startDate?.seconds) {
       throw new Error("Missing required booking fields (userEmail, userName, or startDate)");
     }
 
-    // Validate startDate
-    let eventDate;
-    try {
-      eventDate = format(
-        new Date(booking.startDate.seconds * 1000),
-        "MMMM dd, yyyy"
-      );
-    } catch (dateError) {
-      throw new Error(`Invalid startDate format: ${dateError.message}`);
-    }
+    // Format event date
+    const eventDate = format(new Date(booking.startDate.seconds * 1000), "MMMM dd, yyyy");
 
     // Update Firestore
-    const bookingRef = doc(db, "bookings", bookingId);
-    try {
-      await updateDoc(bookingRef, {
-        status: "approved",
-        approvedAt: serverTimestamp(),
-      });
-    } catch (firestoreError) {
-      throw new Error(`Firestore update failed: ${firestoreError.message || 'Unknown Firestore error'}`);
-    }
+    await updateDoc(doc(db, "bookings", bookingId), {
+      status: "approved",
+      approvedAt: serverTimestamp(),
+    });
 
-    // Send email confirmation
+    // Prepare email parameters
     const emailParams = {
-      to_email: booking.userEmail,
-      to_name: booking.userName,
+      customer_name: booking.userName || booking.fullName || booking.name || "Customer",
+      to_email: booking.userEmail || booking.email,
       booking_id: bookingId,
       venue_name: venue.name,
       event_date: eventDate,
       total_amount: booking.totalAmount?.toLocaleString() || "0",
     };
 
-    try {
-      const emailResponse = await emailjs.send(
-        "service_ht35ae7",
-        "template_rzcby3k",
-        emailParams,
-        "pAbartLYJWKojQ9K4"
-      );
-      console.log("Email sent successfully:", emailResponse);
-    } catch (emailError) {
-      throw new Error(`EmailJS failed: ${emailError.message || 'Unknown EmailJS error'}`);
-    }
+    // Log parameters for debugging
+    console.log("Sending email with params:", emailParams);
+
+    // Send email via EmailJS with response logging
+    const response = await emailjs.send(
+      "service_78cbqwb",
+      "template_xdtb4cu",
+      emailParams,
+      "PrESL7jvhEiy-h2-o"
+    );
+    console.log("EmailJS Response:", response);
 
     // Update state to remove approved booking
-    setActiveBookings((prev) =>
-      prev.filter((booking) => booking.id !== bookingId)
-    );
-
+    setActiveBookings((prev) => prev.filter((b) => b.id !== bookingId));
     alert("Booking approved and confirmation email sent!");
   } catch (error) {
-    const errorMessage = error.message || "Unknown error occurred";
-    console.error("Error approving booking:", {
-      message: errorMessage,
-      stack: error.stack,
-      bookingId,
-      errorDetails: error,
-    });
-    alert(`Error approving booking: ${errorMessage}. Please try again.`);
+    console.error("Error approving booking:", error);
+    // Check if error is from EmailJS
+    if (error.name === "EmailJSResponseError") {
+      alert(`Email sending failed: ${error.message}. Check console for details.`);
+    } else {
+      alert(`Error: ${error.message}`);
+    }
   }
 };
+
 
   const ActiveBookingsSection = () => (
     <section className="mt-8">
@@ -306,11 +286,11 @@ export default function AdminPage() {
                     </div>
                     <div>
                       <h4 className="font-medium">End Date:</h4>
-                      <p className="text-sm">
-                        {new Date(
-                          booking.endDate?.seconds * 1000
-                        ).toLocaleDateString()}
-                      </p>
+                     <p className="text-sm">
+  {booking.endDate?.seconds
+    ? new Date(booking.endDate.seconds * 1000).toLocaleDateString()
+    : "Not specified"}
+</p>
                     </div>
                     <div>
                       <h4 className="font-medium">Total Amount:</h4>
